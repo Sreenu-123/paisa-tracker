@@ -1,8 +1,9 @@
+
 # Paisa — Personal Finance Tracker
 
 A personal finance tracker built with React and Vite to record income and expenses and view spending summaries in a clean dark-themed dashboard.
 
-![Paisa dashboard](docs/paisa-dashboard.png)
+<img width="1710" height="1112" alt="Screenshot 2026-10-28 at 1 46 40 PM" src="https://github.com/user-attachments/assets/2ef391c4-9eda-475a-b986-042d9c97a4a7" />
 
 ## Features
 
