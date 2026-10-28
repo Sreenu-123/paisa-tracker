@@ -1,75 +1,50 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  Wallet,
-  LayoutDashboard,
-  ArrowLeftRight,
-  ChartNoAxesCombined,
-  Settings,
-  Plus,
-  Search,
-  Bell,
-  ArrowUpRight,
-  ArrowDownRight,
-  IndianRupee,
-  TrendingUp,
-  Trash2,
-  X,
-  CalendarDays,
-  ChevronDown,
-  CircleDollarSign,
-  PiggyBank,
-  ReceiptText,
-  Menu,
+  Wallet, LayoutDashboard, ArrowLeftRight, Plus, Search,
+  ArrowUpRight, ArrowDownRight, IndianRupee, TrendingUp,
+  Trash2, X, ChevronDown, PiggyBank, ReceiptText, Menu,
 } from "lucide-react";
+import { apiRequest, loginUser, signupUser } from "./api.js";
 import "./index.css";
 
-const STORAGE_KEY = "paisa-tracker-transactions";
-
 const categories = [
-  "Food",
-  "Transport",
-  "Shopping",
-  "Bills",
-  "Health",
-  "Education",
-  "Entertainment",
-  "Salary",
-  "Freelance",
-  "Investment",
-  "Other",
+  "Food", "Transport", "Shopping", "Bills", "Health",
+  "Education", "Entertainment", "Salary", "Freelance",
+  "Investment", "Other",
 ];
 
-const money = (amount) =>
+const money = (value) =>
   new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency: "INR",
     maximumFractionDigits: 2,
-  }).format(amount);
+  }).format(value);
 
-function readTransactions() {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    const parsed = saved ? JSON.parse(saved) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
+const monthKey = (date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 
-function getMonthKey(date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-}
-
-function App() {
-  const [transactions, setTransactions] = useState(readTransactions);
+export default function App() {
+  const [token, setToken] = useState(
+    () => localStorage.getItem("paisa-access-token")
+  );
+  const [user, setUser] = useState(null);
+  const [transactions, setTransactions] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [apiError, setApiError] = useState("");
+  const [authMode, setAuthMode] = useState("login");
+  const [authForm, setAuthForm] = useState({
+    name: "", email: "", password: "",
+  });
+  const [authError, setAuthError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
   const [activePage, setActivePage] = useState("Overview");
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All");
   const [showForm, setShowForm] = useState(false);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [formError, setFormError] = useState("");
-
+  const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     title: "",
     amount: "",
@@ -79,124 +54,101 @@ function App() {
   });
 
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(transactions));
-    } catch {
-      setFormError("Could not save data. Check your browser storage.");
+    if (!token) {
+      setUser(null);
+      setTransactions([]);
+      return;
     }
-  }, [transactions]);
 
-  const currentMonth = getMonthKey(new Date());
+    let cancelled = false;
 
-  const stats = useMemo(() => {
-    const current = transactions.filter(
-      (item) => item.date?.slice(0, 7) === currentMonth
-    );
+    async function loadData() {
+      setLoading(true);
+      setApiError("");
 
-    const income = current
-      .filter((item) => item.type === "income")
-      .reduce((sum, item) => sum + item.amount, 0);
+      try {
+        const [profile, items] = await Promise.all([
+          apiRequest("/users/me", { token }),
+          apiRequest("/transactions", { token }),
+        ]);
 
-    const expenses = current
-      .filter((item) => item.type === "expense")
-      .reduce((sum, item) => sum + item.amount, 0);
+        if (cancelled) return;
 
-    const totalIncome = transactions
-      .filter((item) => item.type === "income")
-      .reduce((sum, item) => sum + item.amount, 0);
+        setUser(profile);
+        setTransactions(items.map((item) => ({
+          ...item,
+          amount: Number(item.amount),
+          date: String(item.date).slice(0, 10),
+        })));
+      } catch (error) {
+        if (cancelled) return;
 
-    const totalExpenses = transactions
-      .filter((item) => item.type === "expense")
-      .reduce((sum, item) => sum + item.amount, 0);
+        if (error.status === 401) {
+          localStorage.removeItem("paisa-access-token");
+          setToken(null);
+        } else {
+          setApiError(error.message || "Could not load your account.");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
 
-    return {
-      income,
-      expenses,
-      balance: totalIncome - totalExpenses,
-      savings: income - expenses,
-      savingsRate: income > 0 ? ((income - expenses) / income) * 100 : 0,
-    };
-  }, [transactions, currentMonth]);
+    loadData();
+    return () => { cancelled = true; };
+  }, [token]);
 
-  const visibleTransactions = useMemo(() => {
-    return [...transactions]
-      .filter((item) => {
-        const matchesSearch =
-          item.title.toLowerCase().includes(search.toLowerCase()) ||
-          item.category.toLowerCase().includes(search.toLowerCase());
+  
+  async function handleAuth(event) {
+    event.preventDefault();
+    setAuthError("");
+    setAuthLoading(true);
 
-        const matchesFilter =
-          filter === "All" ||
-          (filter === "Income" && item.type === "income") ||
-          (filter === "Expenses" && item.type === "expense");
+    try {
+      if (authMode === "signup") {
+        await signupUser(authForm);
 
-        const matchesPage =
-          activePage !== "Transactions" ||
-          true;
+        // Signup successful: redirect to Sign In, don't auto-login.
+        setAuthMode("login");
+        setAuthForm({
+          name: "",
+          email: authForm.email.trim(),
+          password: "",
+        });
+        setAuthError("");
+        return;
+      }
 
-        return matchesSearch && matchesFilter && matchesPage;
-      })
-      .sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id);
-  }, [transactions, search, filter, activePage]);
+      const result = await loginUser(
+        authForm.email.trim(),
+        authForm.password
+      );
 
-  const monthlyData = useMemo(() => {
-    const now = new Date();
+      localStorage.setItem("paisa-access-token", result.access_token);
+      setToken(result.access_token);
 
-    return Array.from({ length: 6 }, (_, index) => {
-      const date = new Date(now.getFullYear(), now.getMonth() - 5 + index, 1);
-      const key = getMonthKey(date);
-
-      const income = transactions
-        .filter((item) => item.date?.slice(0, 7) === key && item.type === "income")
-        .reduce((sum, item) => sum + item.amount, 0);
-
-      const expenses = transactions
-        .filter((item) => item.date?.slice(0, 7) === key && item.type === "expense")
-        .reduce((sum, item) => sum + item.amount, 0);
-
-      return {
-        key,
-        label: date.toLocaleDateString("en-IN", { month: "short" }),
-        income,
-        expenses,
-      };
-    });
-  }, [transactions]);
-
-  const maxChartValue = Math.max(
-    ...monthlyData.flatMap((item) => [item.income, item.expenses]),
-    1
-  );
-
-  const expenseBreakdown = useMemo(() => {
-    const totals = {};
-
-    transactions
-      .filter(
-        (item) =>
-          item.type === "expense" &&
-          item.date?.slice(0, 7) === currentMonth
-      )
-      .forEach((item) => {
-        totals[item.category] = (totals[item.category] || 0) + item.amount;
+      setAuthForm({
+        name: "",
+        email: "",
+        password: "",
       });
+    } catch (error) {
+      setAuthError(error.message || "Could not authenticate.");
+    } finally {
+      setAuthLoading(false);
+    }
+  }
 
-    return Object.entries(totals)
-      .map(([name, amount]) => ({ name, amount }))
-      .sort((a, b) => b.amount - a.amount);
-  }, [transactions, currentMonth]);
 
-  const categoryColors = [
-    "#A78BFA",
-    "#67E8F9",
-    "#FBBF24",
-    "#FB7185",
-    "#4ADE80",
-    "#60A5FA",
-    "#F472B6",
-  ];
+  function logout() {
+    localStorage.removeItem("paisa-access-token");
+    setToken(null);
+    setUser(null);
+    setTransactions([]);
+    setApiError("");
+  }
 
-  function openNewTransaction(type = "expense") {
+  function openTransaction(type = "expense") {
     setForm({
       title: "",
       amount: "",
@@ -208,13 +160,13 @@ function App() {
     setShowForm(true);
   }
 
-  function handleSubmit(event) {
+  async function saveTransaction(event) {
     event.preventDefault();
 
     const amount = Number(form.amount);
 
     if (!form.title.trim()) {
-      setFormError("Please enter a transaction description.");
+      setFormError("Enter a transaction description.");
       return;
     }
 
@@ -223,75 +175,245 @@ function App() {
       return;
     }
 
-    if (!form.date || Number.isNaN(Date.parse(form.date))) {
-      setFormError("Please choose a valid date.");
-      return;
-    }
-
-    const transaction = {
-      id: Date.now(),
-      title: form.title.trim(),
-      amount: Math.round(amount * 100) / 100,
-      type: form.type,
-      category: form.category,
-      date: form.date,
-    };
-
-    setTransactions((previous) => [...previous, transaction]);
-    setShowForm(false);
+    setSaving(true);
     setFormError("");
-  }
 
-  function deleteTransaction(id) {
-    const confirmed = window.confirm("Delete this transaction?");
-    if (confirmed) {
-      setTransactions((previous) =>
-        previous.filter((item) => item.id !== id)
-      );
+    try {
+      const item = await apiRequest("/transactions", {
+        method: "POST",
+        token,
+        body: {
+          title: form.title.trim(),
+          amount,
+          type: form.type,
+          category: form.category,
+          date: `${form.date}T12:00:00`,
+        },
+      });
+
+      setTransactions((old) => [{
+        ...item,
+        amount: Number(item.amount),
+        date: String(item.date).slice(0, 10),
+      }, ...old]);
+
+      setShowForm(false);
+      setApiError("");
+    } catch (error) {
+      if (error.status === 401) {
+        logout();
+      } else {
+        setFormError(error.message || "Could not save transaction.");
+      }
+    } finally {
+      setSaving(false);
     }
   }
 
-  function formatDate(date) {
-    return new Date(`${date}T00:00:00`).toLocaleDateString("en-IN", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    });
+  async function removeTransaction(id) {
+    if (!window.confirm("Delete this transaction?")) return;
+
+    try {
+      await apiRequest(`/transactions/${id}`, {
+        method: "DELETE",
+        token,
+      });
+
+      setTransactions((old) => old.filter((item) => item.id !== id));
+      setApiError("");
+    } catch (error) {
+      if (error.status === 401) logout();
+      else setApiError(error.message || "Could not delete transaction.");
+    }
   }
 
   function exportCSV() {
-    const headers = ["Description", "Type", "Category", "Date", "Amount"];
-    const rows = transactions.map((item) => [
-      item.title,
-      item.type,
-      item.category,
-      item.date,
-      item.amount,
-    ]);
+    const rows = [
+      ["Description", "Type", "Category", "Date", "Amount"],
+      ...transactions.map((item) => [
+        item.title, item.type, item.category, item.date, item.amount,
+      ]),
+    ];
 
-    const csv = [headers, ...rows]
-      .map((row) =>
-        row
-          .map((value) => `"${String(value).replace(/"/g, '""')}"`)
-          .join(",")
-      )
-      .join("\n");
+    const csv = rows.map((row) =>
+      row.map((value) =>
+        `"${String(value ?? "").replace(/"/g, '""')}"`
+      ).join(",")
+    ).join("\n");
 
     const url = URL.createObjectURL(
       new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" })
     );
-
     const link = document.createElement("a");
     link.href = url;
-    link.download = "paisa-tracker-transactions.csv";
+    link.download = "paisa-transactions.csv";
     link.click();
     URL.revokeObjectURL(url);
   }
 
-  const navigation = [
-    { name: "Overview", icon: LayoutDashboard },
-    { name: "Transactions", icon: ArrowLeftRight },
-  ];
+  const currentMonth = monthKey(new Date());
+
+  const stats = useMemo(() => {
+    const current = transactions.filter(
+      (item) => item.date?.slice(0, 7) === currentMonth
+    );
+    const income = current
+      .filter((item) => item.type === "income")
+      .reduce((sum, item) => sum + item.amount, 0);
+    const expenses = current
+      .filter((item) => item.type === "expense")
+      .reduce((sum, item) => sum + item.amount, 0);
+    const allIncome = transactions
+      .filter((item) => item.type === "income")
+      .reduce((sum, item) => sum + item.amount, 0);
+    const allExpenses = transactions
+      .filter((item) => item.type === "expense")
+      .reduce((sum, item) => sum + item.amount, 0);
+
+    return {
+      income,
+      expenses,
+      balance: allIncome - allExpenses,
+      savingsRate: income ? ((income - expenses) / income) * 100 : 0,
+    };
+  }, [transactions, currentMonth]);
+
+  const monthlyData = useMemo(() => {
+    const now = new Date();
+
+    return Array.from({ length: 6 }, (_, index) => {
+      const date = new Date(
+        now.getFullYear(), now.getMonth() - 5 + index, 1
+      );
+      const key = monthKey(date);
+      const items = transactions.filter(
+        (item) => item.date?.slice(0, 7) === key
+      );
+
+      return {
+        label: date.toLocaleDateString("en-IN", { month: "short" }),
+        income: items.filter((x) => x.type === "income")
+          .reduce((sum, x) => sum + x.amount, 0),
+        expenses: items.filter((x) => x.type === "expense")
+          .reduce((sum, x) => sum + x.amount, 0),
+      };
+    });
+  }, [transactions]);
+
+  const breakdown = useMemo(() => {
+    const totals = {};
+
+    transactions
+      .filter((item) =>
+        item.type === "expense" &&
+        item.date?.slice(0, 7) === currentMonth
+      )
+      .forEach((item) => {
+        totals[item.category] = (totals[item.category] || 0) + item.amount;
+      });
+
+    return Object.entries(totals)
+      .map(([category, amount]) => ({ category, amount }))
+      .sort((a, b) => b.amount - a.amount);
+  }, [transactions, currentMonth]);
+
+  const filteredTransactions = transactions
+    .filter((item) => {
+      const query = search.toLowerCase();
+      const matchesSearch =
+        item.title.toLowerCase().includes(query) ||
+        item.category.toLowerCase().includes(query);
+
+      const matchesFilter =
+        filter === "All" ||
+        (filter === "Income" && item.type === "income") ||
+        (filter === "Expenses" && item.type === "expense");
+
+      return matchesSearch && matchesFilter;
+    })
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  const maxChart = Math.max(
+    1, ...monthlyData.flatMap((item) => [item.income, item.expenses])
+  );
+
+  if (!token) {
+    return (
+      <div className="auth-page">
+        <section className="auth-card">
+          <div className="auth-brand">
+            <div className="brand-mark"><Wallet size={24} /></div>
+            <div><h1>paisa<span>.</span></h1><p>PERSONAL FINANCE</p></div>
+          </div>
+
+          <span className="auth-eyebrow">YOUR MONEY, YOUR RULES</span>
+          <h2>{authMode === "login" ? "Welcome back." : "Create your account."}</h2>
+          <p className="auth-subtitle">
+            {authMode === "login"
+              ? "Sign in to access your finance dashboard."
+              : "Start tracking every rupee."}
+          </p>
+
+          <form className="auth-form" onSubmit={handleAuth}>
+            {authMode === "signup" && <>
+              <label htmlFor="auth-name">FULL NAME</label>
+              <input
+                id="auth-name"
+                className="form-input"
+                value={authForm.name}
+                onChange={(e) => setAuthForm({ ...authForm, name: e.target.value })}
+                minLength={2}
+                required
+                autoComplete="name"
+              />
+            </>}
+
+            <label htmlFor="auth-email">EMAIL ADDRESS</label>
+            <input
+              id="auth-email"
+              className="form-input"
+              type="email"
+              value={authForm.email}
+              onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })}
+              required
+              autoComplete="email"
+            />
+
+            <label htmlFor="auth-password">PASSWORD</label>
+            <input
+              id="auth-password"
+              className="form-input"
+              type="password"
+              value={authForm.password}
+              onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })}
+              minLength={8}
+              required
+              autoComplete={authMode === "login" ? "current-password" : "new-password"}
+            />
+
+            {authError && <p className="form-error">{authError}</p>}
+
+            <button className="primary-button auth-submit" disabled={authLoading}>
+              {authLoading ? "Please wait..." :
+                authMode === "login" ? "Sign in" : "Create account"}
+            </button>
+          </form>
+
+          <p className="auth-switch">
+            {authMode === "login" ? "New to Paisa?" : "Already have an account?"}
+            {" "}
+            <button type="button" onClick={() => {
+              setAuthMode(authMode === "login" ? "signup" : "login");
+              setAuthError("");
+            }}>
+              {authMode === "login" ? "Create account" : "Sign in"}
+            </button>
+          </p>
+          <p className="auth-footnote"><Wallet size={14} /> Your own personal finance space.</p>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell">
@@ -305,32 +427,23 @@ function App() {
 
       <aside className={`sidebar ${mobileMenu ? "sidebar-open" : ""}`}>
         <div className="brand">
-          <div className="brand-mark">
-            <Wallet size={23} strokeWidth={2.2} />
-          </div>
-          <div>
-            <h1>paisa<span>.</span></h1>
-            <p>PERSONAL FINANCE</p>
-          </div>
-          <button
-            className="icon-button mobile-close"
-            onClick={() => setMobileMenu(false)}
-            aria-label="Close menu"
-          >
-            <X size={19} />
+          <div className="brand-mark"><Wallet size={23} /></div>
+          <div><h1>paisa<span>.</span></h1><p>PERSONAL FINANCE</p></div>
+          <button className="icon-button mobile-close" onClick={() => setMobileMenu(false)}>
+            <X size={18} />
           </button>
         </div>
 
         <div className="nav-label">WORKSPACE</div>
         <nav className="navigation">
-          {navigation.map(({ name, icon: Icon }) => (
+          {[
+            ["Overview", LayoutDashboard],
+            ["Transactions", ArrowLeftRight],
+          ].map(([name, Icon]) => (
             <button
               key={name}
               className={`nav-item ${activePage === name ? "nav-active" : ""}`}
-              onClick={() => {
-                setActivePage(name);
-                setMobileMenu(false);
-              }}
+              onClick={() => { setActivePage(name); setMobileMenu(false); }}
             >
               <Icon size={19} />
               <span>{name}</span>
@@ -349,480 +462,254 @@ function App() {
             <p>Every transaction tells a story. Make yours count.</p>
           </div>
           <div className="profile">
-            <div className="avatar">P</div>
+            <div className="avatar">{(user?.name || "P")[0].toUpperCase()}</div>
             <div className="profile-info">
-              <strong>My Wallet</strong>
-              <span>Personal account</span>
+              <strong>{user?.name || "My Wallet"}</strong>
+              <span>{user?.email || "Personal account"}</span>
             </div>
-            <CircleDollarSign size={20} className="profile-icon" />
           </div>
+          <button className="logout-button" onClick={logout}>Sign out</button>
         </div>
       </aside>
 
       <main className="main-content">
         <header className="topbar">
+          <button className="icon-button mobile-menu-button" onClick={() => setMobileMenu(true)}>
+            <Menu size={21} />
+          </button>
           <div className="breadcrumb">
-            <button
-              className="icon-button mobile-menu-button"
-              onClick={() => setMobileMenu(true)}
-              aria-label="Open navigation"
-            >
-              <Menu size={21} />
-            </button>
-            <span>Workspace</span>
-            <span className="breadcrumb-slash">/</span>
+            <span>Workspace</span><span className="breadcrumb-slash">/</span>
             <strong>{activePage}</strong>
           </div>
-
-          <div className="topbar-right">
-            <span className="today-label">
-              <CalendarDays size={15} />
-              {new Date().toLocaleDateString("en-IN", {
-                day: "numeric",
-                month: "short",
-                year: "numeric",
-              })}
-            </span>
-            <div className="topbar-divider" />
-            <div className="avatar top-avatar">P</div>
+          <div className="topbar-actions">
+            <span className="profile-icon">{(user?.name || "P")[0].toUpperCase()}</span>
+            <button className="logout-button" onClick={logout}>Sign out</button>
           </div>
         </header>
 
         <div className="page-container">
-          <section className="welcome-row">
+          {apiError && <div className="api-notice">{apiError}</div>}
+
+          <section className="page-heading">
             <div>
-              <div className="eyebrow">
-                <span className="status-dot" />
-                YOUR MONEY, YOUR RULES
-              </div>
-              <h2>
-                {activePage === "Overview"
-                  ? "Financial overview"
-                  : "Your transactions"}
-                <span className="heading-period">.</span>
-              </h2>
-              <p className="welcome-subtitle">
-                {activePage === "Overview"
-                  ? "Here's what's happening with your money."
-                  : "Every rupee, accounted for."}
-              </p>
+              <span className="eyebrow">YOUR FINANCIAL OVERVIEW</span>
+              <h1>{activePage === "Overview" ? "Good to see you." : "Transactions"}</h1>
+              <p>Here's what's happening with your money.</p>
             </div>
-            <button
-              className="primary-button"
-              onClick={() => openNewTransaction()}
-            >
-              <Plus size={18} />
-              Add transaction
-            </button>
+            <div className="heading-actions">
+              <button className="export-button" onClick={exportCSV}>Export CSV</button>
+              <button className="primary-button" onClick={() => openTransaction()}>
+                <Plus size={17} /> Add transaction
+              </button>
+            </div>
           </section>
 
-          {activePage === "Overview" && (
-            <>
-              <section className="balance-card">
-                <div className="balance-glow" />
+          {loading && <p className="loading-message">Loading your account...</p>}
+
+          {activePage === "Overview" && <>
+            <section className="stats-grid">
+              <article className="stat-card balance-card">
                 <div className="balance-top">
-                  <div className="balance-label">
-                    <span className="balance-icon"><Wallet size={19} /></span>
-                    TOTAL BALANCE
-                  </div>
-                  <span className="balance-badge">
-                    <TrendingUp size={14} />
-                    Live overview
-                  </span>
+                  <span className="balance-label">Total balance</span>
+                  <span className="balance-icon"><Wallet size={20} /></span>
                 </div>
-                <div className="balance-amount">{money(stats.balance)}</div>
-                <p className="balance-description">
-                  Net total of all recorded income and expenses
-                </p>
+                <h2 className="balance-amount">{money(stats.balance)}</h2>
+                <p className="balance-description">All-time income minus expenses</p>
                 <div className="balance-footer">
-                  <div>
-                    <span className="balance-footer-label">THIS MONTH'S SAVINGS</span>
-                    <strong className={stats.savings < 0 ? "negative-text" : ""}>
-                      {money(stats.savings)}
-                    </strong>
-                  </div>
-                  <div className="savings-rate">
-                    <span>Income retained</span>
-                    <strong>{stats.savingsRate.toFixed(1)}%</strong>
-                  </div>
+                  <span className="balance-footer-label">Current balance</span>
+                  <span className="balance-badge"><TrendingUp size={14} /> Tracking</span>
                 </div>
-              </section>
+              </article>
 
-              <section className="stats-grid">
-                <article className="stat-card">
-                  <div className="stat-top">
-                    <span className="stat-icon income-icon"><ArrowDownRight size={20} /></span>
-                    <span className="stat-period">THIS MONTH</span>
-                  </div>
-                  <p className="stat-title">Total income</p>
-                  <h3>{money(stats.income)}</h3>
-                  <p className="stat-footnote"><span className="positive-dot" /> Money coming in</p>
-                </article>
+              <article className="stat-card">
+                <div className="stat-top">
+                  <span className="stat-label">Monthly income</span>
+                  <span className="income-icon"><ArrowDownRight size={20} /></span>
+                </div>
+                <h2>{money(stats.income)}</h2>
+                <p className="stat-description">Income this month</p>
+              </article>
 
-                <article className="stat-card">
-                  <div className="stat-top">
-                    <span className="stat-icon expense-icon"><ArrowUpRight size={20} /></span>
-                    <span className="stat-period">THIS MONTH</span>
-                  </div>
-                  <p className="stat-title">Total expenses</p>
-                  <h3>{money(stats.expenses)}</h3>
-                  <p className="stat-footnote"><span className="expense-dot" /> Money going out</p>
-                </article>
+              <article className="stat-card">
+                <div className="stat-top">
+                  <span className="stat-label">Monthly expenses</span>
+                  <span className="expense-icon"><ArrowUpRight size={20} /></span>
+                </div>
+                <h2>{money(stats.expenses)}</h2>
+                <p className="stat-description">Expenses this month</p>
+              </article>
 
-                <article className="stat-card">
-                  <div className="stat-top">
-                    <span className="stat-icon savings-icon"><PiggyBank size={20} /></span>
-                    <span className="stat-period">THIS MONTH</span>
-                  </div>
-                  <p className="stat-title">Net savings</p>
-                  <h3 className={stats.savings < 0 ? "negative-text" : ""}>{money(stats.savings)}</h3>
-                  <p className="stat-footnote"><span className="savings-dot" /> Income minus expenses</p>
-                </article>
-              </section>
+              <article className="stat-card">
+                <div className="stat-top">
+                  <span className="stat-label">Savings rate</span>
+                  <span className="savings-icon"><PiggyBank size={20} /></span>
+                </div>
+                <h2>{stats.savingsRate.toFixed(1)}%</h2>
+                <p className="stat-description">Monthly income minus expenses</p>
+              </article>
+            </section>
 
-              <section className="charts-grid">
-                <article className="panel chart-panel">
-                  <div className="panel-header">
-                    <div>
-                      <h3>Cash flow</h3>
-                      <p>Income vs expenses over six months</p>
-                    </div>
-                    <span className="chart-period">6 MONTHS <ChevronDown size={14} /></span>
-                  </div>
-
-                  <div className="chart-legend">
-                    <span><i className="legend-income" /> Income</span>
-                    <span><i className="legend-expense" /> Expenses</span>
-                  </div>
-
-                  <div className="bar-chart">
-                    {[0, 1, 2, 3].map((line) => (
-                      <div
-                        key={line}
-                        className="chart-gridline"
-                        style={{ top: `${line * 33.33}%` }}
-                      />
-                    ))}
-                    {monthlyData.map((month) => (
-                      <div className="chart-month" key={month.key}>
-                        <div className="bar-pair">
-                          <div
-                            className="bar bar-income"
-                            title={`Income: ${money(month.income)}`}
-                            style={{
-                              height: `${Math.max((month.income / maxChartValue) * 100, 2)}%`,
-                            }}
-                          />
-                          <div
-                            className="bar bar-expense"
-                            title={`Expenses: ${money(month.expenses)}`}
-                            style={{
-                              height: `${Math.max((month.expenses / maxChartValue) * 100, 2)}%`,
-                            }}
-                          />
-                        </div>
-                        <span className="month-label">{month.label}</span>
+            <section className="charts-grid">
+              <article className="panel chart-panel">
+                <div className="panel-header">
+                  <div><h3>Cash flow</h3><p>Income vs expenses · last 6 months</p></div>
+                  <span className="chart-period">6 months</span>
+                </div>
+                <div className="chart-legend">
+                  <span className="legend-income">Income</span>
+                  <span className="legend-expense">Expenses</span>
+                </div>
+                <div className="bar-chart">
+                  {monthlyData.map((item) => (
+                    <div className="bar-pair" key={item.label}>
+                      <div className="bar-stack">
+                        <div className="bar bar-income" style={{ height: `${Math.max(2, item.income / maxChart * 100)}%` }} title={`Income: ${money(item.income)}`} />
+                        <div className="bar bar-expense" style={{ height: `${Math.max(2, item.expenses / maxChart * 100)}%` }} title={`Expenses: ${money(item.expenses)}`} />
                       </div>
-                    ))}
-                  </div>
-                  <p className="chart-note">Amounts are calculated from your recorded transactions.</p>
-                </article>
-
-                <article className="panel breakdown-panel">
-                  <div className="panel-header">
-                    <div>
-                      <h3>Spending breakdown</h3>
-                      <p>Where your money goes</p>
+                      <span className="chart-month">{item.label}</span>
                     </div>
-                    <span className="breakdown-icon"><ChartNoAxesCombined size={19} /></span>
-                  </div>
+                  ))}
+                </div>
+              </article>
 
-                  {expenseBreakdown.length === 0 ? (
-                    <div className="empty-breakdown">
-                      <div className="empty-icon"><ReceiptText size={24} /></div>
-                      <strong>No expenses yet</strong>
-                      <p>Add an expense to see your spending categories.</p>
-                    </div>
-                  ) : (
-                    <div className="breakdown-list">
-                      {expenseBreakdown.slice(0, 6).map((item, index) => {
-                        const total = expenseBreakdown.reduce(
-                          (sum, entry) => sum + entry.amount,
-                          0
-                        );
-                        const percent = total > 0 ? (item.amount / total) * 100 : 0;
-
-                        return (
-                          <div className="breakdown-item" key={item.name}>
-                            <div className="breakdown-item-top">
-                              <span>
-                                <i style={{ background: categoryColors[index % categoryColors.length] }} />
-                                {item.name}
-                              </span>
-                              <strong>{money(item.amount)}</strong>
-                            </div>
-                            <div className="progress-track">
-                              <div
-                                className="progress-fill"
-                                style={{
-                                  width: `${percent}%`,
-                                  background: categoryColors[index % categoryColors.length],
-                                }}
-                              />
-                            </div>
-                            <span className="breakdown-percent">{percent.toFixed(1)}% of expenses</span>
+              <article className="panel breakdown-panel">
+                <div className="panel-header">
+                  <div><h3>Spending breakdown</h3><p>This month's expenses</p></div>
+                </div>
+                {breakdown.length === 0 ? (
+                  <div className="empty-breakdown"><ReceiptText size={24} /><p>No expenses this month yet.</p></div>
+                ) : (
+                  <div className="breakdown-list">
+                    {breakdown.map((item, index) => {
+                      const total = breakdown.reduce((sum, x) => sum + x.amount, 0);
+                      const percent = total ? item.amount / total * 100 : 0;
+                      return (
+                        <div className="breakdown-item" key={item.category}>
+                          <div className="breakdown-item-top">
+                            <span>{item.category}</span>
+                            <strong>{money(item.amount)}</strong>
                           </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </article>
-              </section>
-            </>
-          )}
+                          <div className="progress-track">
+                            <div className="progress-fill" style={{ width: `${percent}%`, background: ["#A78BFA", "#67E8F9", "#FBBF24", "#FB7185", "#4ADE80"][index % 5] }} />
+                          </div>
+                          <span className="breakdown-percent">{percent.toFixed(0)}%</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </article>
+            </section>
+          </>}
 
           <section className="panel transactions-panel">
-            <div className="panel-header transactions-heading">
+            <div className="panel-header">
               <div>
                 <h3>{activePage === "Overview" ? "Recent transactions" : "All transactions"}</h3>
-                <p>
-                  {activePage === "Overview"
-                    ? "Keep track of where every rupee goes."
-                    : `${transactions.length} transaction${transactions.length === 1 ? "" : "s"} recorded`}
-                </p>
+                <p>Your income and expenses</p>
               </div>
-              <div className="transaction-actions">
-                {transactions.length > 0 && (
-                  <button className="secondary-button export-button" onClick={exportCSV}>
-                    Export CSV
-                  </button>
-                )}
-                {activePage === "Overview" && (
-                  <button
-                    className="text-button"
-                    onClick={() => setActivePage("Transactions")}
-                  >
-                    View all <ArrowUpRight size={15} />
-                  </button>
-                )}
+              <div className="transaction-controls">
+                <div className="search-box">
+                  <Search size={16} />
+                  <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search..." />
+                  {search && <button className="clear-search" onClick={() => setSearch("")}><X size={14} /></button>}
+                </div>
+                <div className="filter-control">
+                  <select value={filter} onChange={(e) => setFilter(e.target.value)}>
+                    <option>All</option><option>Income</option><option>Expenses</option>
+                  </select>
+                  <ChevronDown size={14} />
+                </div>
               </div>
             </div>
 
-            <div className="table-toolbar">
-              <div className="search-box">
-                <Search size={17} />
-                <input
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search transactions..."
-                  aria-label="Search transactions"
-                />
-                {search && (
-                  <button className="clear-search" onClick={() => setSearch("")} aria-label="Clear search">
-                    <X size={15} />
-                  </button>
-                )}
-              </div>
-              <div className="filter-control">
-                <span>Type:</span>
-                <select
-                  value={filter}
-                  onChange={(event) => setFilter(event.target.value)}
-                  aria-label="Filter transaction type"
-                >
-                  <option>All</option>
-                  <option>Income</option>
-                  <option>Expenses</option>
-                </select>
-                <ChevronDown size={14} />
-              </div>
-            </div>
-
-            {visibleTransactions.length === 0 ? (
+            {filteredTransactions.length === 0 ? (
               <div className="empty-transactions">
-                <div className="empty-icon"><ReceiptText size={26} /></div>
-                <h4>{transactions.length === 0 ? "Your story starts here" : "No transactions found"}</h4>
-                <p>
-                  {transactions.length === 0
-                    ? "Add your first income or expense to bring your dashboard to life."
-                    : "Try another search term or change the transaction filter."}
-                </p>
-                {transactions.length === 0 && (
-                  <button className="primary-button" onClick={() => openNewTransaction()}>
-                    <Plus size={17} /> Add your first transaction
-                  </button>
-                )}
+                <div className="empty-icon"><ReceiptText size={24} /></div>
+                <h4>{transactions.length ? "No matching transactions" : "No transactions yet"}</h4>
+                <p>{transactions.length ? "Try changing the search or filter." : "Add a transaction to get started."}</p>
+                {!transactions.length && <button className="primary-button" onClick={() => openTransaction()}><Plus size={16} /> Add transaction</button>}
               </div>
             ) : (
-              <div className="table-scroll">
+              <div className="table-wrap">
                 <table className="transactions-table">
-                  <thead>
-                    <tr>
-                      <th>TRANSACTION</th>
-                      <th>CATEGORY</th>
-                      <th>DATE</th>
-                      <th>AMOUNT</th>
-                      <th aria-label="Actions" />
-                    </tr>
-                  </thead>
+                  <thead><tr><th>TRANSACTION</th><th>CATEGORY</th><th>DATE</th><th>AMOUNT</th><th /></tr></thead>
                   <tbody>
-                    {(activePage === "Overview"
-                      ? visibleTransactions.slice(0, 5)
-                      : visibleTransactions
-                    ).map((item, index) => (
+                    {(activePage === "Overview" ? filteredTransactions.slice(0, 5) : filteredTransactions).map((item) => (
                       <tr key={item.id}>
-                        <td>
-                          <div className="transaction-name">
-                            <span className={`transaction-symbol ${item.type}`}>
-                              {item.type === "income" ? (
-                                <ArrowDownRight size={18} />
-                              ) : (
-                                <ArrowUpRight size={18} />
-                              )}
-                            </span>
-                            <div>
-                              <strong>{item.title}</strong>
-                              <span>{item.type === "income" ? "Income" : "Expense"}</span>
-                            </div>
-                          </div>
-                        </td>
+                        <td><div className="transaction-name">
+                          <span className={`transaction-type-icon ${item.type === "income" ? "transaction-income" : "transaction-expense"}`}>
+                            {item.type === "income" ? <ArrowDownRight size={17} /> : <ArrowUpRight size={17} />}
+                          </span>
+                          <div><strong>{item.title}</strong><span>{item.type}</span></div>
+                        </div></td>
                         <td><span className="category-pill">{item.category}</span></td>
-                        <td className="date-cell">{formatDate(item.date)}</td>
-                        <td className={`amount-cell ${item.type}`}>
+                        <td className="date-cell">{new Date(`${item.date}T00:00:00`).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</td>
+                        <td className={`amount-cell ${item.type === "income" ? "positive-text" : "negative-text"}`}>
                           {item.type === "income" ? "+" : "−"}{money(item.amount)}
                         </td>
-                        <td>
-                          <button
-                            className="delete-button"
-                            onClick={() => deleteTransaction(item.id)}
-                            aria-label={`Delete ${item.title}`}
-                            title="Delete transaction"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </td>
+                        <td><button className="delete-button" onClick={() => removeTransaction(item.id)} aria-label="Delete transaction"><Trash2 size={16} /></button></td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             )}
-            {activePage === "Overview" && visibleTransactions.length > 5 && (
-              <button className="table-footer" onClick={() => setActivePage("Transactions")}>
-                View all {visibleTransactions.length} matching transactions <ArrowUpRight size={15} />
-              </button>
-            )}
+
+            <div className="table-footer">
+              <span>{filteredTransactions.length} transaction(s)</span>
+              {activePage === "Overview" && filteredTransactions.length > 5 && (
+                <button className="text-button" onClick={() => setActivePage("Transactions")}>See all transactions</button>
+              )}
+            </div>
           </section>
 
           <footer className="page-footer">
-            <span>© {new Date().getFullYear()} paisa. Built for better money habits.</span>
-            <span><span className="footer-dot" /> Data stored locally on this device</span>
+            <span>© {new Date().getFullYear()} Paisa</span>
+            <span>Every rupee counts.</span>
           </footer>
         </div>
       </main>
 
       {showForm && (
-        <div
-          className="modal-backdrop"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setShowForm(false);
-          }}
-        >
-          <section className="transaction-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div className="modal-backdrop" onMouseDown={(e) => {
+          if (e.target === e.currentTarget) setShowForm(false);
+        }}>
+          <section className="transaction-modal" role="dialog" aria-modal="true">
             <div className="modal-header">
-              <div>
-                <span className="modal-eyebrow">TRANSACTION DETAILS</span>
-                <h2 id="modal-title">Add transaction</h2>
-                <p>Record where your money comes from or goes.</p>
-              </div>
-              <button className="icon-button" onClick={() => setShowForm(false)} aria-label="Close dialog">
-                <X size={20} />
-              </button>
+              <div><span className="modal-eyebrow">YOUR FINANCES</span><h2>Add transaction</h2></div>
+              <button className="icon-button" onClick={() => setShowForm(false)}><X size={20} /></button>
             </div>
 
-            <form onSubmit={handleSubmit}>
+            <form onSubmit={saveTransaction}>
               <label className="form-label">TRANSACTION TYPE</label>
               <div className="type-toggle">
-                <button
-                  type="button"
-                  className={form.type === "expense" ? "type-selected expense-selected" : ""}
-                  onClick={() => setForm({ ...form, type: "expense", category: "Food" })}
-                >
-                  <ArrowUpRight size={17} /> Expense
-                </button>
-                <button
-                  type="button"
-                  className={form.type === "income" ? "type-selected income-selected" : ""}
-                  onClick={() => setForm({ ...form, type: "income", category: "Salary" })}
-                >
-                  <ArrowDownRight size={17} /> Income
-                </button>
+                <button type="button" className={form.type === "expense" ? "type-selected expense-selected" : ""} onClick={() => setForm({ ...form, type: "expense", category: "Food" })}><ArrowUpRight size={17} /> Expense</button>
+                <button type="button" className={form.type === "income" ? "type-selected income-selected" : ""} onClick={() => setForm({ ...form, type: "income", category: "Salary" })}><ArrowDownRight size={17} /> Income</button>
               </div>
 
               <label className="form-label" htmlFor="transaction-title">DESCRIPTION</label>
-              <input
-                id="transaction-title"
-                className="form-input"
-                placeholder="e.g. Monthly salary, groceries..."
-                value={form.title}
-                onChange={(event) => setForm({ ...form, title: event.target.value })}
-                maxLength={100}
-                autoFocus
-              />
+              <input id="transaction-title" className="form-input" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} maxLength={150} required />
 
               <label className="form-label" htmlFor="transaction-amount">AMOUNT (₹)</label>
-              <div className="amount-input-wrap">
-                <IndianRupee size={18} />
-                <input
-                  id="transaction-amount"
-                  className="form-input amount-input"
-                  type="number"
-                  placeholder="0.00"
-                  min="0.01"
-                  max="1000000000000"
-                  step="0.01"
-                  value={form.amount}
-                  onChange={(event) => setForm({ ...form, amount: event.target.value })}
-                />
-              </div>
+              <div className="amount-input-wrap"><IndianRupee size={18} /><input id="transaction-amount" className="form-input amount-input" type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} required /></div>
 
               <div className="form-two-column">
-                <div>
-                  <label className="form-label" htmlFor="transaction-category">CATEGORY</label>
-                  <select
-                    id="transaction-category"
-                    className="form-input"
-                    value={form.category}
-                    onChange={(event) => setForm({ ...form, category: event.target.value })}
-                  >
-                    {categories.map((category) => (
-                      <option key={category}>{category}</option>
-                    ))}
+                <div><label className="form-label" htmlFor="transaction-category">CATEGORY</label>
+                  <select id="transaction-category" className="form-input" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+                    {categories.map((category) => <option key={category}>{category}</option>)}
                   </select>
                 </div>
-                <div>
-                  <label className="form-label" htmlFor="transaction-date">DATE</label>
-                  <input
-                    id="transaction-date"
-                    className="form-input"
-                    type="date"
-                    value={form.date}
-                    onChange={(event) => setForm({ ...form, date: event.target.value })}
-                  />
+                <div><label className="form-label" htmlFor="transaction-date">DATE</label>
+                  <input id="transaction-date" className="form-input" type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required />
                 </div>
               </div>
 
               {formError && <p className="form-error">{formError}</p>}
-
               <div className="modal-actions">
-                <button type="button" className="secondary-button" onClick={() => setShowForm(false)}>
-                  Cancel
-                </button>
-                <button type="submit" className="primary-button">
-                  <Plus size={17} /> Save transaction
-                </button>
+                <button type="button" className="secondary-button" onClick={() => setShowForm(false)}>Cancel</button>
+                <button type="submit" className="primary-button" disabled={saving}><Plus size={17} /> {saving ? "Saving..." : "Save transaction"}</button>
               </div>
-              <p className="privacy-note"><Wallet size={14} /> Saved locally in this browser. No account needed.</p>
             </form>
           </section>
         </div>
@@ -830,5 +717,3 @@ function App() {
     </div>
   );
 }
-
-export default App;
