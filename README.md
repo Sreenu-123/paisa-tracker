@@ -4,25 +4,27 @@
 A personal finance tracker built with React and Vite to record income and expenses and view spending summaries in a clean dark-themed dashboard.
 
 <img width="1710" height="1112" alt="Screenshot 2026-10-28 at 1 46 40 PM" src="https://github.com/user-attachments/assets/2ef391c4-9eda-475a-b986-042d9c97a4a7" />
+# 💰 Paisa Tracker
 
-## Features
+A personal finance tracker built with React, FastAPI, and PostgreSQL.
 
+🚀 **Live Demo:** [Open Paisa Tracker](https://paisa-tracker-1-r0qe.onrender.com)
+
+## ✨ Features
+- User registration and login
 - Track income and expenses
-- View total balance, monthly income, expenses, and savings
-- Categorize transactions
-- View cash flow and spending breakdown
-- Search and filter transactions
-- Export transactions to CSV
-- Save transaction data in browser `localStorage`
+- Manage transactions
+- PostgreSQL database integration
+- Responsive React interface
 
-## Tech Stack
+## 🛠️ Tech Stack
+- **Frontend:** React, Vite
+- **Backend:** FastAPI, Python
+- **Database:** PostgreSQL (Neon)
+- **Authentication:** JWT
+- **Deployment:** Render
 
-- React
-- Vite
-- JavaScript
-- CSS
-- Lucide React
-- Browser `localStorage`
+
 
 ## 🔐 Repository Access & Contributions
 
