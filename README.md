@@ -3,6 +3,8 @@
 
 A personal finance tracker built with React and Vite to record income and expenses and view spending summaries in a clean dark-themed dashboard.
 
+<img width="1710" height="1112" alt="Screenshot 2026-10-29 at 12 10 15 PM" src="https://github.com/user-attachments/assets/339bb698-05d6-4d4b-91ae-1b8590c6f5d5" />
+
 <img width="1710" height="1112" alt="Screenshot 2026-10-29 at 12 08 10 PM" src="https://github.com/user-attachments/assets/b73902d2-1d53-478b-86cb-44b12d8c89ec" />
 
 # 💰 Paisa Tracker
